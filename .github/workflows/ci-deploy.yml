@@ -1,0 +1,75 @@
+# Test every PR; on merge to main, also apply D1 migrations and deploy the
+# Worker. A failing test or typecheck blocks the deploy, so a broken build
+# never replaces the running controller (the old version keeps ticking).
+#
+# Repo secrets (Settings -> Secrets and variables -> Actions):
+#   CLOUDFLARE_API_TOKEN  - "Edit Cloudflare Workers" template + D1:Edit
+#   CLOUDFLARE_ACCOUNT_ID - dashboard sidebar, Workers & Pages
+#   D1_DATABASE_ID        - from `wrangler d1 create ev_optimiser`; replaces
+#                           the placeholder in wrangler.jsonc at deploy time
+# Without CLOUDFLARE_API_TOKEN (e.g. a fresh fork) the deploy job is skipped.
+# Worker secrets (TESSIE_TOKEN etc.) stay in Cloudflare; deploys keep them.
+name: CI / Deploy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch: # manual redeploy from the Actions tab
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }} # never cancel a deploy midway
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm test
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      HAS_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        if: env.HAS_TOKEN == 'true'
+      - name: Fill in the D1 database id
+        if: env.HAS_TOKEN == 'true'
+        env:
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+        run: |
+          test -n "$D1_DATABASE_ID" || { echo "::error::D1_DATABASE_ID repo secret is not set"; exit 1; }
+          sed -i "s/YOUR_D1_DATABASE_ID/$D1_DATABASE_ID/" wrangler.jsonc
+      # Migrations first: new code must never run against an old schema.
+      # Already-applied migrations are skipped, so this is a no-op most days.
+      - uses: cloudflare/wrangler-action@v3
+        if: env.HAS_TOKEN == 'true'
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          packageManager: pnpm
+          command: |
+            d1 migrations apply ev_optimiser --remote
+            deploy

@@ -1,0 +1,19 @@
+# Local secrets for `pnpm run dev` (copy to .dev.vars, which is gitignored).
+# Production uses `wrangler secret put <NAME>` for each of these.
+# Car API: fill in exactly ONE provider (the Worker refuses both or neither).
+TESSIE_TOKEN=
+TESSIE_VIN=
+# or Teslascope: personal access token + the vehicle's Teslascope public ID
+# TESLASCOPE_TOKEN=
+# TESLASCOPE_VEHICLE_ID=
+# or TeslaFi: API token (per vehicle, so no VIN); tick Charge Start/Stop and
+# Set Charging Amps under Settings → Tesla API → Commands
+# TESLAFI_TOKEN=
+FOXESS_API_KEY=
+FOXESS_DEVICE_SN=
+# Pick an unguessable topic: anyone who knows it can read your alerts.
+NTFY_TOPIC=
+# Bearer token for the admin routes (/backfill, /status, /car/*, /debug/foxess).
+ADMIN_KEY=
+# Optional: bearer for POST /presence (bluetooth car-presence feed).
+# PRESENCE_KEY=
