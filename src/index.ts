@@ -320,20 +320,7 @@ export async function runTick(
   };
   const { actions, next } = decide(inputs);
 
-  if (!shadowMode) {
-    for (const act of actions) {
-      if (act.kind === "start_charging") {
-        await carApi.startCharging();
-        await carApi.setChargingAmps(act.amps);
-      } else if (act.kind === "stop_charging") {
-        await carApi.stopCharging();
-      } else if (act.kind === "set_amps") {
-        await carApi.setChargingAmps(act.amps);
-      } else {
-        await notify(env, act.message);
-      }
-    }
-  }
+  const failedAlerts = shadowMode ? [] : await executeActions(actions, carApi, (m) => notify(env, m));
 
   const stateChanged = !stored || stored.state !== next.state;
   if (actions.length || stateChanged) {
@@ -344,7 +331,8 @@ export async function runTick(
           new Date().toISOString(),
           stored?.state ?? "PLAN",
           next.state,
-          prefix + (actions.length ? actions.map(describeAction).join(" | ") : "none"),
+          prefix +
+            (actions.length ? actions.map((a) => describeAction(a, failedAlerts.includes(a))).join(" | ") : "none"),
           JSON.stringify({
             nowMins,
             car: inputs.car,
@@ -381,10 +369,47 @@ export async function runTick(
   }
 }
 
-function describeAction(a: Action): string {
+function describeAction(a: Action, alertFailed = false): string {
   if (a.kind === "start_charging" || a.kind === "set_amps") return `${a.kind}:${a.amps}`;
   if (a.kind === "stop_charging") return `stop_charging:${a.reason}`;
-  return `notify:${a.message}`;
+  return `${alertFailed ? "notify_failed" : "notify"}:${a.message}`;
+}
+
+/** Execute decide()'s actions: every car command first (in decide's order),
+ *  then the alerts. An alert failure (ntfy 429/5xx/down) is logged and
+ *  returned, never thrown — it must not abort the tick. Otherwise the
+ *  grid-down path ("…car charging stopped" queued before stop_charging)
+ *  would never send the stop, never save state, and repeat identically
+ *  every tick while the car drains the house battery (invariants 1–2).
+ *  A car-command failure still throws: the tick fails loud and the next
+ *  tick redoes the decision from unchanged state. Returns the alert
+ *  actions that failed, so the decisions row records them as notify_failed. */
+export async function executeActions(
+  actions: Action[],
+  carApi: Pick<CarClient, "startCharging" | "stopCharging" | "setChargingAmps">,
+  send: (message: string) => Promise<void>,
+): Promise<Action[]> {
+  for (const act of actions) {
+    if (act.kind === "start_charging") {
+      await carApi.startCharging();
+      await carApi.setChargingAmps(act.amps);
+    } else if (act.kind === "stop_charging") {
+      await carApi.stopCharging();
+    } else if (act.kind === "set_amps") {
+      await carApi.setChargingAmps(act.amps);
+    }
+  }
+  const failed: Action[] = [];
+  for (const act of actions) {
+    if (act.kind !== "notify") continue;
+    try {
+      await send(act.message);
+    } catch (err) {
+      console.error("alert failed, tick continues", act.message, err);
+      failed.push(act);
+    }
+  }
+  return failed;
 }
 
 /** Read failures must not spam: log every one, ntfy at most every 3 h.
