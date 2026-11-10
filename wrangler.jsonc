@@ -10,6 +10,16 @@
     // sending car commands; set it to 'false' once you trust the log.
     "crons": ["*/5 * * * *"]
   },
+  // Workers Logs: keeps console output (e.g. "alert failed, tick continues",
+  // "tick failed") and each cron/fetch invocation, so a failure that never
+  // reached ntfy can still be found in the dashboard. The decisions table
+  // stays the record of what the controller decided.
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  },
   "d1_databases": [
     {
       "binding": "DB",
