@@ -676,6 +676,11 @@ sessions table, three unread config rows) are removed.
   consecutive ticks → stop_charging + alert (never sit on sustained paid
   import).
 - Every alert via ntfy.sh POST (topic in secrets).
+- ntfy down / rate-limited (429, 5xx): a tick runs every car command
+  first, then its alerts; a failed alert is logged (console + a
+  `notify_failed:` entry in the decisions row) and the tick carries on
+  and saves state. An alert must never block a stop — the grid-down
+  path queues its alert before the stop.
 
 ## Costs
 
